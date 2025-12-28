@@ -62,7 +62,20 @@ internal static class MigrateDbContextExtensions
 
         try
         {
-            await context.Database.MigrateAsync();
+            try
+            {
+                await context.Database.MigrateAsync();
+            }
+            catch (Exception ex) when (ex.ToString().Contains("42P04") || (ex.InnerException?.ToString().Contains("42P04") ?? false))
+            {
+                // This exception (42P04: database already exists) can happen if a previous attempt created the database 
+                // but failed before completion (e.g. transient network error during the initial response), 
+                // causing the execution strategy to retry the entire operation.
+                // In this case, we can safely ignore the creation error and attempt migration again.
+                // The second call to MigrateAsync should detect the database exists and proceed to apply migrations (creation of tables).
+                await context.Database.MigrateAsync();
+            }
+            
             await seeder(context, services);
         }
         catch (Exception ex)

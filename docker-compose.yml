@@ -1,0 +1,203 @@
+services:
+  identity-api:
+    image: ${REGISTRY:-eshop}/identity-api:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: src/Identity.API/Dockerfile
+    ports:
+      - "5105:8080"
+    environment:
+      - Identity__Url=http://identity-api:8080
+      - ConnectionStrings__identitydb=Host=postgres;Database=identitydb;Username=postgres;Password=Password12!
+      - ASPNETCORE_ENVIRONMENT=Development
+      - WebAppClient=http://localhost:5200
+      - WebhooksWebClient=http://localhost:5106
+      - BasketApiClient=http://localhost:5103
+      - OrderingApiClient=http://localhost:5102
+      - WebhooksApiClient=http://localhost:5104
+    depends_on:
+      - postgres
+    networks:
+      - eshop_net
+
+  basket-api:
+    image: ${REGISTRY:-eshop}/basket-api:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: src/Basket.API/Dockerfile
+    ports:
+      - "5103:8080"
+    environment:
+      - Identity__Url=http://identity-api:8080
+      - ConnectionStrings__redis=redis:6379,password=Password12!
+      - ConnectionStrings__eventbus=amqp://guest:guest@rabbitmq:5672
+      - ASPNETCORE_ENVIRONMENT=Development
+    depends_on:
+      - redis
+      - rabbitmq
+      - identity-api
+    networks:
+      - eshop_net
+
+  catalog-api:
+    image: ${REGISTRY:-eshop}/catalog-api:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: src/Catalog.API/Dockerfile
+    ports:
+      - "5101:8080"
+    environment:
+      - ConnectionStrings__catalogdb=Host=postgres;Database=catalogdb;Username=postgres;Password=Password12!
+      - ConnectionStrings__eventbus=amqp://guest:guest@rabbitmq:5672
+      - ASPNETCORE_ENVIRONMENT=Development
+    depends_on:
+      - postgres
+      - rabbitmq
+    networks:
+      - eshop_net
+
+  ordering-api:
+    image: ${REGISTRY:-eshop}/ordering-api:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: src/Ordering.API/Dockerfile
+    ports:
+      - "5102:8080"
+    environment:
+      - Identity__Url=http://identity-api:8080
+      - ConnectionStrings__orderingdb=Host=postgres;Database=orderingdb;Username=postgres;Password=Password12!
+      - ConnectionStrings__eventbus=amqp://guest:guest@rabbitmq:5672
+      - ASPNETCORE_ENVIRONMENT=Development
+    depends_on:
+      - postgres
+      - rabbitmq
+      - identity-api
+    networks:
+      - eshop_net
+
+  order-processor:
+    image: ${REGISTRY:-eshop}/order-processor:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: src/OrderProcessor/Dockerfile
+    environment:
+      - ConnectionStrings__orderingdb=Host=postgres;Database=orderingdb;Username=postgres;Password=Password12!
+      - ConnectionStrings__eventbus=amqp://guest:guest@rabbitmq:5672
+      - ASPNETCORE_ENVIRONMENT=Development
+    depends_on:
+      - postgres
+      - rabbitmq
+      - ordering-api
+    networks:
+      - eshop_net
+
+  payment-processor:
+    image: ${REGISTRY:-eshop}/payment-processor:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: src/PaymentProcessor/Dockerfile
+    environment:
+      - ConnectionStrings__eventbus=amqp://guest:guest@rabbitmq:5672
+      - ASPNETCORE_ENVIRONMENT=Development
+    depends_on:
+      - rabbitmq
+    networks:
+      - eshop_net
+
+  webhooks-api:
+    image: ${REGISTRY:-eshop}/webhooks-api:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: src/Webhooks.API/Dockerfile
+    ports:
+      - "5104:8080"
+    environment:
+      - Identity__Url=http://identity-api:8080
+      - ConnectionStrings__webhooksdb=Host=postgres;Database=webhooksdb;Username=postgres;Password=Password12!
+      - ConnectionStrings__eventbus=amqp://guest:guest@rabbitmq:5672
+      - ASPNETCORE_ENVIRONMENT=Development
+    depends_on:
+      - postgres
+      - rabbitmq
+      - identity-api
+    networks:
+      - eshop_net
+
+  webapp:
+    image: ${REGISTRY:-eshop}/webapp:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: src/WebApp/Dockerfile
+    ports:
+      - "5200:8080"
+    environment:
+      - IdentityUrl=http://identity-api:8080
+      - ServiceUrls__BasketApi=http://basket-api:8080
+      - ServiceUrls__CatalogApi=http://catalog-api:8080
+      - ServiceUrls__OrderingApi=http://ordering-api:8080
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_HTTP_PORTS=8080
+      - CallBackUrl=http://localhost:5200
+    depends_on:
+      - identity-api
+      - basket-api
+      - catalog-api
+      - ordering-api
+    networks:
+      - eshop_net
+
+  webhook-client:
+    image: ${REGISTRY:-eshop}/webhook-client:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: src/WebhookClient/Dockerfile
+    ports:
+      - "5106:8080"
+    environment:
+      - Identity__Url=http://identity-api:8080
+      - ServiceUrls__WebhooksApi=http://webhooks-api:8080
+      - CallBackUrl=http://localhost:5106
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_HTTP_PORTS=8080
+    depends_on:
+      - identity-api
+      - webhooks-api
+    networks:
+      - eshop_net
+
+  postgres:
+    image: ankane/pgvector:latest
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_PASSWORD=Password12!
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - eshop_net
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass Password12!
+    networks:
+      - eshop_net
+
+  rabbitmq:
+    image: rabbitmq:management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    networks:
+      - eshop_net
+
+networks:
+  eshop_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
